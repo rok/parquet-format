@@ -834,6 +834,8 @@ optional group external_file (FILE) {
 
 This section specifies how `LIST` and `MAP` can be used to encode nested types
 by adding group levels around repeated fields that are not present in the data.
+It also specifies `FIXED_SIZE_LIST`, a logical type for lists whose non-null
+values all have the same length.
 
 This does not affect repeated fields that are not annotated: A repeated field
 that is neither contained by a `LIST`- or `MAP`-annotated group nor annotated
@@ -1002,6 +1004,199 @@ optional group my_list (LIST) {
   };
 }
 ```
+
+### Fixed-size lists
+
+`FIXED_SIZE_LIST` is a logical type used to annotate ordered sequences whose
+non-null values all contain the same number of elements. Its
+`FixedSizeListType` annotation has one required parameter, `length`, and an
+optional `vector_properties` parameter described below. `length` must be
+greater than zero.
+
+The logical meaning of `FIXED_SIZE_LIST` is independent of its physical
+representation. The annotation is stored in `LogicalType.FIXED_SIZE_LIST` and
+must always annotate the outer group of a 3-level structure. This version uses
+the canonical `LIST` representation. A future revision may define a different
+fixed-size-list representation for the middle level without changing the
+logical type or the 3-level structure.
+
+A null list is distinct from a non-null list whose elements are all null. Null
+elements count toward `length` of a non-null list.
+
+#### Element type and nullability
+
+The element type must be a fixed-width primitive scalar. The allowed physical
+types are `BOOLEAN`, `INT32`, `INT64`, `FLOAT`, `DOUBLE`, and
+`FIXED_LEN_BYTE_ARRAY`. A `FIXED_LEN_BYTE_ARRAY` element must have a positive
+`type_length`. `BYTE_ARRAY`, `INT96`, and group elements are not allowed. Any
+logical annotation that is valid for the element's physical type may be used.
+
+`FIXED_SIZE_LIST` must not directly annotate a primitive field, including a
+`FIXED_LEN_BYTE_ARRAY`. A `FIXED_LEN_BYTE_ARRAY` may be the element leaf of the
+3-level structure. Its `type_length` is the byte length of one element, while
+`FixedSizeListType.length` is the number of elements in each non-null list. If
+all elements are non-null, the PLAIN-encoded element values for one list occupy
+`type_length * length` bytes. For example, `FIXED_SIZE_LIST(3)` with
+`fixed_len_byte_array(16)` elements has three 16-byte elements and occupies 48
+bytes per list value when all elements are non-null.
+
+Every representation must preserve whether the list and its individual
+elements may be null. Nullability is not duplicated in `FixedSizeListType`.
+
+#### LIST-compatible representation
+
+In this representation, `FIXED_SIZE_LIST` uses the same 3-level structure as
+`LIST`:
+
+```
+<list-repetition> group <name> (FIXED_SIZE_LIST(<length>)) {
+  repeated group list {
+    <element-repetition> <element-type> element;
+  }
+}
+```
+
+* The outer-most level must be a group with `logicalType` set to
+  `FIXED_SIZE_LIST` and `converted_type` set to `LIST`. Its repetition must be
+  either `optional` or `required` and determines whether the list is nullable.
+  It must contain a single field named `list`.
+* The middle level, named `list`, must be a repeated group with a single field
+  named `element`.
+* The `element` field defines the element type and nullability. It must satisfy
+  the element-type rules above. Its repetition must be `required` or `optional`
+  and determines whether individual elements may be null.
+
+The `FIXED_SIZE_LIST` logical annotation identifies the logical type. The
+`LIST` converted annotation identifies the LIST-compatible representation and
+its fallback interpretation.
+
+The 2-level structures accepted for `LIST` under the backward-compatibility
+rules are not valid for `FIXED_SIZE_LIST`.
+
+A `FIXED_SIZE_LIST` may appear wherever a `LIST` may appear, including as a
+`LIST` element, a `MAP` value, or a field of a group.
+
+In this version, if `FIXED_SIZE_LIST` annotates a schema element that does not
+satisfy these representation rules, the annotation is invalid. Readers must not
+apply fixed-size or vector semantics to such a column. They must either reject
+it or read the LIST-compatible representation as an ordinary `LIST`.
+
+For example, a nullable fixed-size list of three non-null float values is:
+
+```
+// FixedSizeList<Float, 3> (list nullable, elements non-null)
+optional group embedding (FIXED_SIZE_LIST(3)) {
+  repeated group list {
+    required float element;
+  }
+}
+```
+
+For the values `[1.0, 2.0, 3.0]`, `null`, and `[4.0, 5.0, 6.0]`, the maximum
+definition level is 2 and the maximum repetition level is 1. The leaf column
+contains:
+
+```
+definition levels: [2, 2, 2, 0, 2, 2, 2]
+repetition levels: [0, 1, 1, 0, 0, 1, 1]
+values:            [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+```
+
+A null list contributes one level entry and no values. A null element
+contributes one level entry and counts as one of the `length` elements. Because
+`length` is greater than zero, a non-null list is never empty, and the
+definition level that would encode an empty list must not occur.
+
+Levels, value counts, encodings, compression, encryption, and page boundaries
+are exactly those of `LIST`. `FIXED_SIZE_LIST` adds no requirement that a list
+value be contained in a single data page.
+
+#### Vector properties
+
+`FixedSizeListType` may set `vector_properties`, a `VectorProperties` struct.
+Its presence marks the list as a vector, for example, an embedding. It does
+not imply a distance metric, normalization, an embedding model, an index, or
+a physical layout. A `vector_properties` with no properties set still marks
+the list as a vector.
+
+When `vector_properties` is set, the element must be one of:
+
+* `BOOLEAN`, `FLOAT`, or `DOUBLE` with no logical annotation;
+* `INT32` or `INT64`, either unannotated or annotated with `INT` or
+  `DECIMAL`; or
+* `FIXED_LEN_BYTE_ARRAY` annotated with `FLOAT16` or `DECIMAL`.
+
+Other element types, including unannotated `FIXED_LEN_BYTE_ARRAY` and elements
+annotated with `DATE`, `TIME`, `TIMESTAMP`, `UUID`, or `UNKNOWN`, are not
+allowed. Future revisions may allow additional scalar logical types.
+
+`VectorProperties` has one property, `require_finite_elements`. When true,
+every non-null element must be finite: neither NaN, positive infinity, nor
+negative infinity. When absent or false, no guarantee is made; writers should
+omit the field rather than set it to false. It may be set to true only when the
+element is `FLOAT`, `DOUBLE`, or `FIXED_LEN_BYTE_ARRAY` annotated with
+`FLOAT16`; otherwise the annotation is invalid. It does not affect element
+nullability, which is determined by the element repetition. A vector whose
+elements must be both non-null and finite therefore uses a `required` element
+and sets `require_finite_elements` to true.
+
+Readers may ignore `vector_properties` and expose the value as a fixed-size list.
+
+#### Writer and reader requirements
+
+Every non-null list value must contain exactly `length` elements. Writers must
+enforce this invariant and every vector property they set. When rewriting a
+column, `FIXED_SIZE_LIST` may be retained only if the rewritten values still
+satisfy `length` and the vector properties. A rewriter that cannot guarantee
+`length` must not write the values as a `FIXED_SIZE_LIST` and must use another
+valid representation, such as an ordinary `LIST`. A rewriter that cannot
+guarantee `require_finite_elements` must remove that property, and one that
+does not want to assert vector semantics may remove `vector_properties`.
+
+Readers that recognize `FIXED_SIZE_LIST` must use `length` when constructing
+the logical type and values. They may rely on these invariants without
+validating `length` against repetition levels or vector properties against
+element values. Readers may validate these invariants. A reader that finds a
+list with a different number of elements, or a non-finite element where
+`require_finite_elements` is true, must treat the data as invalid. It may report
+an error or read the LIST-compatible representation as an ordinary `LIST`. It
+must not return the data as a valid `FIXED_SIZE_LIST`. Readers must guard
+against overflow when multiplying `length` by row, value, or byte counts.
+
+#### Statistics and sort order
+
+The sort order of `FIXED_SIZE_LIST` values is undefined. In the LIST-compatible
+representation, statistics, column indexes, size statistics, and Bloom filters
+have the same meaning as for the element column of a `LIST`: min/max values,
+`nan_count`, `distinct_count`, and Bloom filter membership describe elements,
+not lists, and must not be used to compare whole lists. When
+`require_finite_elements` is true, any `nan_count` or `nan_counts` written must
+be zero, and readers may assume no NaN values are present when those statistics
+are absent. Writers must still write NaN counts where the format otherwise
+requires them.
+
+#### Compatibility
+
+In the LIST-compatible representation, `FIXED_SIZE_LIST` corresponds to the
+`LIST` ConvertedType. Writers must set both `LogicalType.FIXED_SIZE_LIST` and
+`ConvertedType.LIST`. Readers that do not support `FIXED_SIZE_LIST` may use the
+converted type to read the values as an ordinary `LIST`, without the fixed
+length or vector properties.
+
+#### Future physical representations
+
+A future revision may define an additional 3-level representation for
+`FIXED_SIZE_LIST`, such as a new physical or repetition type for the middle
+level. Every representation must preserve the outer group, middle list level,
+primitive element leaf, ordered sequence, `length`, element type, nullability,
+and vector properties defined by the logical type. The element-type and
+vector-property rules in this section apply to every representation.
+
+A new representation must be identified by a change that readers cannot
+ignore, so that a reader that recognizes `FIXED_SIZE_LIST` but not the
+representation rejects the column rather than misreading it. Future fields
+added to `FixedSizeListType` must not change how levels or data pages are
+decoded.
 
 ### Maps
 
