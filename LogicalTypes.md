@@ -1005,31 +1005,27 @@ optional `vector_properties` parameter described below. `length` must be
 greater than zero.
 
 The logical meaning of `FIXED_SIZE_LIST` is independent of its physical
-representation. The annotation is stored in `LogicalType.FIXED_SIZE_LIST` and
-must always annotate the outer group of a 3-level structure. This version uses
-the canonical `LIST` representation. A future revision may define a different
-fixed-size-list representation for the middle level without changing the
-logical type or the 3-level structure.
+representation. The annotation is stored in `LogicalType.FIXED_SIZE_LIST`. This
+version defines two representations: a canonical 3-level `LIST` structure and
+a packed `FIXED_LEN_BYTE_ARRAY` primitive. A future revision may define another
+representation without changing the logical type.
 
 A null list is distinct from a non-null list whose elements are all null. Null
 elements count toward `length` of a non-null list.
 
 #### Element type and nullability
 
-The element type must be a fixed-width primitive scalar. The allowed physical
-types are `BOOLEAN`, `INT32`, `INT64`, `FLOAT`, `DOUBLE`, and
-`FIXED_LEN_BYTE_ARRAY`. A `FIXED_LEN_BYTE_ARRAY` element must have a positive
-`type_length`. `BYTE_ARRAY`, `INT96`, and group elements are not allowed. Any
-logical annotation that is valid for the element's physical type may be used.
+The element type must be a fixed-width primitive scalar. In the LIST-compatible
+representation, the allowed physical element types are `BOOLEAN`, `INT32`,
+`INT64`, `FLOAT`, `DOUBLE`, and `FIXED_LEN_BYTE_ARRAY`. A
+`FIXED_LEN_BYTE_ARRAY` element must have a positive `type_length`. `BYTE_ARRAY`,
+`INT96`, and group elements are not allowed. Any logical annotation that is
+valid for the element's physical type may be used.
 
-`FIXED_SIZE_LIST` must not directly annotate a primitive field, including a
-`FIXED_LEN_BYTE_ARRAY`. A `FIXED_LEN_BYTE_ARRAY` may be the element leaf of the
-3-level structure. Its `type_length` is the byte length of one element, while
-`FixedSizeListType.length` is the number of elements in each non-null list. If
-all elements are non-null, the PLAIN-encoded element values for one list occupy
-`type_length * length` bytes. For example, `FIXED_SIZE_LIST(3)` with
-`fixed_len_byte_array(16)` elements has three 16-byte elements and occupies 48
-bytes per list value when all elements are non-null.
+In the packed `FIXED_LEN_BYTE_ARRAY` representation, every element is an
+unannotated, non-null `FIXED_LEN_BYTE_ARRAY`. Its byte width is inferred from
+the packed value's `type_length` and `FixedSizeListType.length`, as described
+below.
 
 Every representation must preserve whether the list and its individual
 elements may be null. Nullability is not duplicated in `FixedSizeListType`.
@@ -1064,13 +1060,13 @@ its fallback interpretation.
 The 2-level structures accepted for `LIST` under the backward-compatibility
 rules are not valid for `FIXED_SIZE_LIST`.
 
-A `FIXED_SIZE_LIST` may appear wherever a `LIST` may appear, including as a
-`LIST` element, a `MAP` value, or a field of a group.
+The LIST-compatible representation may appear wherever a `LIST` may appear,
+including as a `LIST` element, a `MAP` value, or a field of a group.
 
-In this version, if `FIXED_SIZE_LIST` annotates a schema element that does not
-satisfy these representation rules, the annotation is invalid. Readers must not
-apply fixed-size or vector semantics to such a column. They must either reject
-it or read the LIST-compatible representation as an ordinary `LIST`.
+If `FIXED_SIZE_LIST` annotates a group that does not satisfy these
+representation rules, the annotation is invalid. Readers must not apply
+fixed-size or vector semantics to such a column. They must either reject it or
+read the LIST-compatible representation as an ordinary `LIST`.
 
 For example, a nullable fixed-size list of three non-null float values is:
 
@@ -1102,6 +1098,47 @@ Levels, value counts, encodings, compression, encryption, and page boundaries
 are exactly those of `LIST`. `FIXED_SIZE_LIST` adds no requirement that a list
 value be contained in a single data page.
 
+#### Packed FIXED_LEN_BYTE_ARRAY representation
+
+In the packed representation, `FIXED_SIZE_LIST` annotates a
+`FIXED_LEN_BYTE_ARRAY` primitive:
+
+```
+<list-repetition> fixed_len_byte_array(<type_length>) <name>
+  (FIXED_SIZE_LIST(<length>));
+```
+
+The annotated field must have:
+
+* physical type `FIXED_LEN_BYTE_ARRAY` with a positive `type_length`;
+* logical type `FIXED_SIZE_LIST` and no converted type;
+* repetition of either `required` or `optional`, which determines whether the
+  list may be null; and
+* a `type_length` that is evenly divisible by `length`.
+
+Each physical value is divided into `length` consecutive elements of equal
+width. The byte width of one element is `type_length / length`. The elements
+are ordered by their position in the physical value and are unannotated
+`FIXED_LEN_BYTE_ARRAY` values. Individual elements cannot be null.
+
+For example, the following field stores three 16-byte elements in each 48-byte
+physical value:
+
+```
+optional fixed_len_byte_array(48) values (FIXED_SIZE_LIST(3));
+```
+
+Definition levels and value counts are those of the annotated primitive field.
+A non-null list contributes one level entry and one physical value; a null list
+contributes one level entry and no physical value. Encodings, compression,
+encryption, and page boundaries apply to the complete packed value, not to its
+individual elements.
+
+If `FIXED_SIZE_LIST` annotates a primitive that does not satisfy these rules,
+the annotation is invalid. Readers must not apply fixed-size or vector
+semantics to it. They must either reject it or read it as an unannotated
+`FIXED_LEN_BYTE_ARRAY`.
+
 #### Vector properties
 
 `FixedSizeListType` may set `vector_properties`, a `VectorProperties` struct.
@@ -1131,7 +1168,10 @@ nullability, which is determined by the element repetition. A vector whose
 elements must be both non-null and finite therefore uses a `required` element
 and sets `require_finite_elements` to true.
 
-Readers may ignore `vector_properties` and expose the value as a fixed-size list.
+Readers may ignore `vector_properties` and expose the value as a fixed-size
+list. `vector_properties` must not be set on the packed `FIXED_LEN_BYTE_ARRAY`
+representation because its unannotated byte-array elements are not valid vector
+coordinates in this version.
 
 #### Writer and reader requirements
 
@@ -1166,6 +1206,13 @@ be zero, and readers may assume no NaN values are present when those statistics
 are absent. Writers must still write NaN counts where the format otherwise
 requires them.
 
+In the packed `FIXED_LEN_BYTE_ARRAY` representation, `null_count` counts null
+list values, while `distinct_count` and Bloom filter membership apply to
+complete packed list values. Because the sort order of `FIXED_SIZE_LIST` is
+undefined, writers must not write min/max statistics or a column index for this
+representation; readers must ignore such bounds if present. `nan_count` and
+`nan_counts` must not be written for the packed representation.
+
 #### Compatibility
 
 In the LIST-compatible representation, `FIXED_SIZE_LIST` corresponds to the
@@ -1174,14 +1221,16 @@ In the LIST-compatible representation, `FIXED_SIZE_LIST` corresponds to the
 converted type to read the values as an ordinary `LIST`, without the fixed
 length or vector properties.
 
+The packed `FIXED_LEN_BYTE_ARRAY` representation has no corresponding
+`ConvertedType`, so `converted_type` must not be set.
+
 #### Future physical representations
 
-A future revision may define an additional 3-level representation for
-`FIXED_SIZE_LIST`, such as a new physical or repetition type for the middle
-level. Every representation must preserve the outer group, middle list level,
-primitive element leaf, ordered sequence, `length`, element type, nullability,
-and vector properties defined by the logical type. The element-type and
-vector-property rules in this section apply to every representation.
+A future revision may define an additional representation for
+`FIXED_SIZE_LIST`, such as a new physical type or a 3-level structure with a new
+repetition type. Every representation must preserve the ordered sequence,
+`length`, element type, nullability, and vector properties defined by the
+logical type.
 
 A new representation must be identified by a change that readers cannot
 ignore, so that a reader that recognizes `FIXED_SIZE_LIST` but not the

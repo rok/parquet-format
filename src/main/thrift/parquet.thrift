@@ -314,8 +314,8 @@ struct Statistics {
     * or DOUBLE, or logical type is FLOAT16.
     * If this field is not present, readers MUST assume NaNs may be present
     * (i.e. MUST assume nan_count > 0 and MAY NOT assume nan_count == 0),
-    * except it element leaf belongs to a FIXED_SIZE_LIST whose
-    * vector_properties.require_finite_elements == true.
+    * unless the element leaf belongs to a FIXED_SIZE_LIST whose
+    * vector_properties.require_finite_elements property is true.
     */
    9: optional i64 nan_count;
 }
@@ -484,14 +484,14 @@ struct FileType {
 /**
  * Vector properties for the FIXED_SIZE_LIST logical type
  *
- * Setting FixedSizeListType.vector_properties allows writers communicate
- * certain properties of the fixed-size list.
+ * Setting FixedSizeListType.vector_properties allows writers to communicate
+ * properties of the fixed-size list.
  *
  * See LogicalTypes.md for details.
  */
 struct VectorProperties {
   /**
-   * If true, every non-null element is finite, so neither NaN or infinite.
+   * If true, every non-null element is finite, so neither NaN nor infinity.
    * This is meaningful only for FLOAT, DOUBLE, and FLOAT16 elements.
    */
   1: optional bool require_finite_elements
@@ -500,11 +500,11 @@ struct VectorProperties {
 /**
  * Fixed-size list logical type annotation
  *
- * Annotates a list in which every non-null element contains exactly `length`
- * elements.
- * This logical type always annotates the outer group of a 3-level
- * structure. The primitive element SchemaElement defines the element type and,
- * for FIXED_LEN_BYTE_ARRAY, the byte width of one element.
+ * Annotates a list in which every non-null value contains exactly `length`
+ * elements. It may annotate a canonical 3-level LIST structure or a packed
+ * FIXED_LEN_BYTE_ARRAY. For the packed representation, the element byte width
+ * is SchemaElement.type_length divided by `length`.
+ *
  * `length` must be greater than zero. See LogicalTypes.md for details.
  */
 struct FixedSizeListType {
@@ -547,7 +547,9 @@ union LogicalType {
   17: GeometryType GEOMETRY   // no compatible ConvertedType
   18: GeographyType GEOGRAPHY // no compatible ConvertedType
   19: FileType FILE           // no compatible ConvertedType
-  20: FixedSizeListType FIXED_SIZE_LIST // use ConvertedType LIST
+
+  // use ConvertedType LIST only for the LIST-compatible representation
+  20: FixedSizeListType FIXED_SIZE_LIST
 }
 
 /**
