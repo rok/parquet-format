@@ -479,6 +479,34 @@ struct GeographyType {
 struct FileType {
 }
 
+/** Element types for packed VECTOR values; see LogicalTypes.md */
+enum VectorElementType {
+  INT8 = 0;
+  UINT8 = 1;
+  INT16 = 2;
+  UINT16 = 3;
+  INT32 = 4;
+  UINT32 = 5;
+  INT64 = 6;
+  UINT64 = 7;
+  FLOAT16 = 8;
+  BFLOAT16 = 9;
+  FLOAT32 = 10;
+  FLOAT64 = 11;
+}
+
+/**
+ * Packed fixed-length vector logical type annotation
+ *
+ * Allowed for FIXED_LEN_BYTE_ARRAY. The physical type length must equal
+ * num_elements multiplied by the byte width of element_type.
+ * Elements are non-nullable. See LogicalTypes.md for details.
+ */
+struct VectorType {
+  1: required i32 num_elements
+  2: required VectorElementType element_type
+}
+
 /**
  * LogicalType annotations to replace ConvertedType.
  *
@@ -513,6 +541,7 @@ union LogicalType {
   17: GeometryType GEOMETRY   // no compatible ConvertedType
   18: GeographyType GEOGRAPHY // no compatible ConvertedType
   19: FileType FILE           // no compatible ConvertedType
+  20: VectorType VECTOR       // no compatible ConvertedType
 }
 
 /**
@@ -1129,6 +1158,7 @@ union ColumnOrder {
    *   GEOMETRY - undefined
    *   GEOGRAPHY - undefined
    *   FILE - undefined
+   *   VECTOR - undefined
    *
    * In the absence of logical types, the sort order is determined by the physical type:
    *   BOOLEAN - false, true

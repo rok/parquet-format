@@ -994,6 +994,75 @@ optional group my_list (LIST) {
 }
 ```
 
+### Vectors
+
+`VECTOR` annotates a fixed-length ordered sequence of non-null numeric elements.
+It must annotate a `FIXED_LEN_BYTE_ARRAY` primitive type and uses two
+parameters:
+
+* `num_elements`: the number of elements in each non-null vector; it must be
+  greater than zero; and
+* `element_type`: a `VectorElementType` value that identifies the element type
+  and its byte width.
+
+`VectorElementType` is independent of the Parquet physical and logical type
+systems. The initial element types are:
+
+| Element type | Width | Representation |
+|--------------|-------|----------------|
+| `INT8` | 1 byte | 8-bit two's-complement integer |
+| `UINT8` | 1 byte | 8-bit unsigned integer |
+| `INT16` | 2 bytes | little-endian two's-complement integer |
+| `UINT16` | 2 bytes | little-endian unsigned integer |
+| `INT32` | 4 bytes | little-endian two's-complement integer |
+| `UINT32` | 4 bytes | little-endian unsigned integer |
+| `INT64` | 8 bytes | little-endian two's-complement integer |
+| `UINT64` | 8 bytes | little-endian unsigned integer |
+| `FLOAT16` | 2 bytes | little-endian IEEE 754 binary16 |
+| `BFLOAT16` | 2 bytes | little-endian bfloat16 |
+| `FLOAT32` | 4 bytes | little-endian IEEE 754 binary32 |
+| `FLOAT64` | 8 bytes | little-endian IEEE 754 binary64 |
+
+The annotated field's `type_length` must equal `num_elements` multiplied by
+the width of `element_type`. Implementations must use checked arithmetic when
+validating or computing this product.
+
+Each physical value contains `num_elements` consecutive elements. The first
+element occupies the first `element_type`-width bytes, and the remaining
+elements follow in order without padding. Individual elements cannot be null.
+The field repetition must be `required` or `optional` and determines whether
+the complete vector may be null.
+
+For example, a nullable vector containing 768 `FLOAT32` elements is:
+
+```
+optional fixed_len_byte_array(3072) embedding
+  (VECTOR(num_elements=768, element_type=FLOAT32));
+```
+
+Any encoding valid for `FIXED_LEN_BYTE_ARRAY` may be used. Encodings,
+compression, encryption, page boundaries, statistics, and Bloom filters apply
+to the complete packed value rather than to individual elements. This version
+defines no element-level encodings. Future versions may add vector-specific
+encodings without changing the logical value.
+
+The sort order of `VECTOR` values is undefined. Writers must not write min/max
+statistics or a column index for a `VECTOR`; readers must ignore such bounds if
+present. `null_count` counts null vectors, while `distinct_count` and Bloom
+filter membership apply to complete vectors.
+
+Writers must validate `num_elements`, `element_type`, and `type_length`.
+Readers must reject the `VECTOR` annotation if these fields do not satisfy the
+requirements above, but may expose the underlying `FIXED_LEN_BYTE_ARRAY` value.
+A reader that does not recognize an `element_type` must not interpret the
+packed bytes as vector elements.
+
+`VECTOR` has no corresponding `ConvertedType`.
+
+New `VectorElementType` values may be added independently of the Parquet type
+system. A new value must define a fixed byte width and a complete byte-level
+representation.
+
 ### Maps
 
 `MAP` is used to annotate types that should be interpreted as a map from keys
