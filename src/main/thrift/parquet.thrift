@@ -313,7 +313,9 @@ struct Statistics {
     * Count of NaN values in the column; only present if physical type is FLOAT
     * or DOUBLE, or logical type is FLOAT16.
     * If this field is not present, readers MUST assume NaNs may be present
-    * (i.e. MUST assume nan_count > 0 and MAY NOT assume nan_count == 0).
+    * (i.e. MUST assume nan_count > 0 and MAY NOT assume nan_count == 0),
+    * unless the element leaf belongs to a FIXED_SIZE_LIST whose
+    * vector_properties.require_finite_elements property is true.
     */
    9: optional i64 nan_count;
 }
@@ -480,6 +482,38 @@ struct FileType {
 }
 
 /**
+ * Vector properties for the FIXED_SIZE_LIST logical type
+ *
+ * Setting FixedSizeListType.vector_properties allows writers to communicate
+ * properties of the fixed-size list.
+ *
+ * See LogicalTypes.md for details.
+ */
+struct VectorProperties {
+  /**
+   * If true, every non-null element is finite, so neither NaN nor infinity.
+   * This is meaningful only for FLOAT, DOUBLE, and FLOAT16 elements.
+   */
+  1: optional bool require_finite_elements
+}
+
+/**
+ * Fixed-size list logical type annotation
+ *
+ * Annotates a list in which every non-null value contains exactly `length`
+ * elements. It may annotate a canonical 3-level LIST structure or a packed
+ * FIXED_LEN_BYTE_ARRAY. For the packed representation, the element byte width
+ * is SchemaElement.type_length divided by `length`.
+ *
+ * `length` must be greater than zero. See LogicalTypes.md for details.
+ */
+struct FixedSizeListType {
+  1: required i32 length
+  /** If set, the fixed-size list is a vector */
+  2: optional VectorProperties vector_properties
+}
+
+/**
  * LogicalType annotations to replace ConvertedType.
  *
  * To maintain compatibility, implementations using LogicalType for a
@@ -513,6 +547,9 @@ union LogicalType {
   17: GeometryType GEOMETRY   // no compatible ConvertedType
   18: GeographyType GEOGRAPHY // no compatible ConvertedType
   19: FileType FILE           // no compatible ConvertedType
+
+  // use ConvertedType LIST only for the LIST-compatible representation
+  20: FixedSizeListType FIXED_SIZE_LIST
 }
 
 /**
@@ -1129,6 +1166,7 @@ union ColumnOrder {
    *   GEOMETRY - undefined
    *   GEOGRAPHY - undefined
    *   FILE - undefined
+   *   FIXED_SIZE_LIST - undefined
    *
    * In the absence of logical types, the sort order is determined by the physical type:
    *   BOOLEAN - false, true
@@ -1366,7 +1404,9 @@ struct ColumnIndex {
     * A list containing the number of NaN values for each page. Only present
     * for columns of physical type FLOAT or DOUBLE, or logical type FLOAT16.
     * If this field is not present, readers MUST assume that there might be
-    * NaN values in any page.
+    * NaN values in any page, unless the element leaf belongs to a
+    * FIXED_SIZE_LIST whose vector_properties.require_finite_elements
+    * property is true.
     */
    8: optional list<i64> nan_counts
 
