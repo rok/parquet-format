@@ -516,6 +516,34 @@ union LogicalType {
 }
 
 /**
+ * Extension type annotation.
+ *
+ * Annotates a schema node with application-level semantics layered on top of
+ * the node's backing type: its physical type, logical and converted types,
+ * type parameters, repetition and subtree structure. An extension type does
+ * not change how values are decoded.
+ *
+ * Writers MUST write the backing type exactly as they would without the
+ * extension type. Readers that do not recognize `name` MUST read the node as
+ * its backing type. See ExtensionTypes.md.
+ */
+struct ExtensionType {
+  /**
+   * Namespaced name of the extension type, e.g. "parquet.vector".
+   * Names beginning with "parquet." are reserved for the canonical extension
+   * types defined in ExtensionTypes.md.
+   */
+  1: required string name;
+
+  /**
+   * Parameters of the extension type, as UTF-8 text interpreted by the named
+   * type's specification. An absent value is equivalent to an empty string.
+   * Canonical extension types with parameters use a JSON object.
+   */
+  2: optional string parameters;
+}
+
+/**
  * Represents an element inside a schema definition.
  *  - if it is a group (inner node) then type is undefined and num_children is defined
  *  - if it is a primitive type (leaf) then type is defined and num_children is undefined
@@ -575,6 +603,12 @@ struct SchemaElement {
    * for some logical types to ensure forward-compatibility in format v1.
    */
   10: optional LogicalType logicalType
+
+  /**
+   * Optional extension type layered on top of this node's backing type.
+   * See ExtensionTypes.md.
+   */
+  11: optional ExtensionType extension_type;
 }
 
 /**
