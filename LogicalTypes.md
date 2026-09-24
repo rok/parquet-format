@@ -65,6 +65,15 @@ to process the column's data.
 
 Compatibility considerations are mentioned for each annotation in the corresponding section.
 
+#### Extension Types
+
+A schema node may also carry an extension type in `SchemaElement.extension_type`,
+in addition to its logical type. Extension types refine the interpretation of the
+node without changing its physical type, logical type or structure. Readers that
+do not recognize an extension type read the node according to its logical and
+physical types. Extension types, including the canonical `parquet.vector` type,
+are specified in [ExtensionTypes.md](ExtensionTypes.md).
+
 ## String Types
 
 ### STRING

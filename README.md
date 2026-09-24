@@ -154,6 +154,16 @@ documented in [LogicalTypes.md][logical-types].
 
 [logical-types]: LogicalTypes.md
 
+### Extension Types
+Extension types annotate a schema node with application-level semantics, such as
+fixed-length vectors, on top of its logical and physical types. They are stored
+as the optional `extension_type` field of a schema element, identified by a
+namespaced name and optional parameters, and do not change how data is decoded.
+Readers that do not recognize an extension type read the underlying types
+unchanged. Extension types are documented in [ExtensionTypes.md][extension-types].
+
+[extension-types]: ExtensionTypes.md
+
 ### Sort Order
 Parquet stores min/max statistics at several levels (such as Column Chunk,
 Column Index, and Data Page). These statistics are according to a sort order,
